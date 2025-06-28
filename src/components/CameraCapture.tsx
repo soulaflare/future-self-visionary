@@ -16,46 +16,6 @@ const CameraCapture = ({ onCapture }: CameraCaptureProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const startCamera = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: 'user'
-        } 
-      });
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        streamRef.current = stream;
-        
-        // Wait for video to load before setting streaming state
-        videoRef.current.onloadedmetadata = () => {
-          setIsStreaming(true);
-          console.log("Video stream started successfully");
-        };
-      }
-    } catch (error) {
-      console.error("Error accessing camera:", error);
-      toast.error("Unable to access camera. Please check permissions.");
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    setIsStreaming(false);
-  }, []);
-
   const capturePhoto = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) {
       console.error("Video or canvas ref not available");
@@ -72,18 +32,67 @@ const CameraCapture = ({ onCapture }: CameraCaptureProps) => {
     }
 
     // Set canvas dimensions to match video
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
     
     // Draw the video frame to canvas
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     
     // Convert to data URL
     const photoUrl = canvas.toDataURL('image/jpeg', 0.8);
-    console.log("Photo captured successfully");
+    console.log("Photo captured successfully", photoUrl.substring(0, 50) + "...");
     setCapturedPhoto(photoUrl);
     stopCamera();
-  }, [stopCamera]);
+    return photoUrl;
+  }, []);
+
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setIsStreaming(false);
+  }, []);
+
+  const startCamera = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          facingMode: 'user'
+        } 
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        streamRef.current = stream;
+        
+        // Wait for video to load, then auto-capture
+        videoRef.current.onloadedmetadata = () => {
+          console.log("Video stream started successfully");
+          setIsStreaming(true);
+          
+          // Auto-capture after a brief delay to ensure video is ready
+          setTimeout(() => {
+            const photoUrl = capturePhoto();
+            if (photoUrl) {
+              console.log("Auto-captured photo");
+            }
+          }, 1000);
+        };
+      }
+    } catch (error) {
+      console.error("Error accessing camera:", error);
+      toast.error("Unable to access camera. Please check permissions.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [capturePhoto]);
 
   const retakePhoto = useCallback(() => {
     setCapturedPhoto(null);
@@ -111,21 +120,19 @@ const CameraCapture = ({ onCapture }: CameraCaptureProps) => {
                   disabled={isLoading}
                   className="bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600"
                 >
-                  {isLoading ? "Loading..." : "Start Camera"}
+                  {isLoading ? "Starting Camera..." : "Take Photo Now"}
                 </Button>
               </div>
             </div>
           )}
           
-          {isStreaming && (
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="w-full h-full object-cover transform scale-x-[-1]"
-              style={{ display: isStreaming ? 'block' : 'none' }}
-            />
+          {isStreaming && !capturedPhoto && (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                <p className="text-gray-600">Capturing photo...</p>
+              </div>
+            </div>
           )}
           
           {capturedPhoto && (
@@ -138,20 +145,14 @@ const CameraCapture = ({ onCapture }: CameraCaptureProps) => {
         </div>
       </div>
 
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className="hidden"
+      />
       <canvas ref={canvasRef} className="hidden" />
-
-      {isStreaming && (
-        <div className="flex justify-center">
-          <Button 
-            onClick={capturePhoto}
-            size="lg"
-            className="bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 rounded-full px-8"
-          >
-            <Camera className="mr-2" size={20} />
-            Capture Photo
-          </Button>
-        </div>
-      )}
 
       {capturedPhoto && (
         <div className="flex justify-center space-x-4">
