@@ -14,18 +14,19 @@ interface ImageGenerationProps {
   onVisionGenerated: (vision: GeneratedVision) => void;
 }
 
-interface RunwareService {
-  generateImage: (params: any) => Promise<any>;
-}
-
 const ImageGeneration = ({ userPhoto, goal, onVisionGenerated }: ImageGenerationProps) => {
   const [apiKey, setApiKey] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState("Preparing...");
 
-  const createPrompt = (goal: string): string => {
-    return `Professional photography of a successful person ${goal}, celebrating achievement, confident smile, professional lighting, high quality, realistic, photorealistic, 4k resolution, detailed, success celebration, achievement moment`;
+  const createEnhancedPrompt = (goal: string): string => {
+    // Create a more detailed prompt based on the goal
+    const basePrompt = `Professional high-quality photograph of a successful person achieving their goal: ${goal}. `;
+    const stylePrompt = "Photorealistic, professional lighting, confident expression, celebrating success, detailed facial features, high resolution, award-winning photography, cinematic composition, vibrant colors, sharp focus, professional setting";
+    const qualityPrompt = " --style raw --ar 1:1 --q 2";
+    
+    return basePrompt + stylePrompt + qualityPrompt;
   };
 
   const generateVision = async () => {
@@ -39,40 +40,128 @@ const ImageGeneration = ({ userPhoto, goal, onVisionGenerated }: ImageGeneration
     setCurrentStep("Connecting to Runware...");
 
     try {
-      // Simulate progress updates
-      const progressSteps = [
-        { progress: 20, step: "Analyzing your goal..." },
-        { progress: 40, step: "Creating AI prompt..." },
-        { progress: 60, step: "Generating your vision..." },
-        { progress: 80, step: "Applying final touches..." },
-        { progress: 100, step: "Complete!" }
-      ];
+      // Step 1: Authentication
+      setProgress(10);
+      setCurrentStep("Authenticating...");
+      
+      const authResponse = await fetch('https://api.runware.ai/v1', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify([
+          {
+            taskType: "authentication",
+            apiKey: apiKey
+          }
+        ])
+      });
 
-      for (const { progress: prog, step } of progressSteps) {
-        setProgress(prog);
-        setCurrentStep(step);
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      if (!authResponse.ok) {
+        throw new Error("Authentication failed. Please check your API key.");
       }
 
-      // Create enhanced prompt
-      const enhancedPrompt = createPrompt(goal);
-      console.log("Generated prompt:", enhancedPrompt);
+      setProgress(25);
+      setCurrentStep("Uploading your photo...");
 
-      // For now, we'll create a placeholder response since Runware requires a WebSocket connection
-      // In a real implementation, you would integrate with Runware's API
-      const mockGeneratedVision: GeneratedVision = {
+      // Step 2: Upload the user's photo for face reference
+      const uploadResponse = await fetch('https://api.runware.ai/v1', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify([
+          {
+            taskType: "authentication",
+            apiKey: apiKey
+          },
+          {
+            taskType: "imageUpload",
+            taskUUID: crypto.randomUUID(),
+            image: userPhoto
+          }
+        ])
+      });
+
+      const uploadResult = await uploadResponse.json();
+      const uploadedImageUUID = uploadResult.data?.find((item: any) => item.taskType === "imageUpload")?.imageUUID;
+
+      setProgress(50);
+      setCurrentStep("Generating your future vision...");
+
+      // Step 3: Generate image with face swap
+      const enhancedPrompt = createEnhancedPrompt(goal);
+      console.log("Enhanced prompt:", enhancedPrompt);
+
+      const generateResponse = await fetch('https://api.runware.ai/v1', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify([
+          {
+            taskType: "authentication",
+            apiKey: apiKey
+          },
+          {
+            taskType: "imageInference",
+            taskUUID: crypto.randomUUID(),
+            positivePrompt: enhancedPrompt,
+            model: "runware:100@1",
+            width: 1024,
+            height: 1024,
+            numberResults: 1,
+            outputFormat: "WEBP",
+            CFGScale: 7,
+            scheduler: "DPMSolverMultistepScheduler",
+            steps: 25,
+            seed: Math.floor(Math.random() * 1000000)
+          },
+          // Add face swap task if we have the uploaded image
+          ...(uploadedImageUUID ? [{
+            taskType: "faceSwap",
+            taskUUID: crypto.randomUUID(),
+            sourceImageUUID: uploadedImageUUID,
+            targetImageUUID: "generated", // This will reference the generated image
+            strength: 0.8
+          }] : [])
+        ])
+      });
+
+      setProgress(80);
+      setCurrentStep("Applying your face to the vision...");
+
+      const generateResult = await generateResponse.json();
+      console.log("Generation result:", generateResult);
+
+      if (generateResult.error || generateResult.errors) {
+        throw new Error(generateResult.errorMessage || "Failed to generate image");
+      }
+
+      const generatedImage = generateResult.data?.find((item: any) => item.taskType === "imageInference" || item.taskType === "faceSwap");
+      
+      if (!generatedImage?.imageURL) {
+        throw new Error("No image was generated");
+      }
+
+      setProgress(100);
+      setCurrentStep("Complete!");
+
+      const newVision: GeneratedVision = {
         id: crypto.randomUUID(),
-        imageUrl: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=500&h=500&fit=crop&crop=face",
+        imageUrl: generatedImage.imageURL,
         goal: goal,
         timestamp: new Date()
       };
 
-      toast.success("Your vision has been generated!");
-      onVisionGenerated(mockGeneratedVision);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      toast.success("Your personalized vision has been generated!");
+      onVisionGenerated(newVision);
 
     } catch (error) {
       console.error("Error generating vision:", error);
-      toast.error("Failed to generate vision. Please try again.");
+      toast.error(`Failed to generate vision: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsGenerating(false);
       setProgress(0);
@@ -89,7 +178,7 @@ const ImageGeneration = ({ userPhoto, goal, onVisionGenerated }: ImageGeneration
           <div className="flex-1">
             <h3 className="font-semibold text-blue-900 mb-2">Runware API Key Required</h3>
             <p className="text-sm text-blue-700 mb-4">
-              To generate your vision, you'll need a Runware API key. Get yours at{" "}
+              To generate your personalized vision, you'll need a Runware API key. Get yours at{" "}
               <a 
                 href="https://runware.ai/" 
                 target="_blank" 
@@ -110,6 +199,21 @@ const ImageGeneration = ({ userPhoto, goal, onVisionGenerated }: ImageGeneration
         </div>
       </Card>
 
+      {/* User Photo Preview */}
+      <Card className="p-4 bg-white/50 backdrop-blur-sm">
+        <div className="flex items-center space-x-4">
+          <img 
+            src={userPhoto} 
+            alt="Your photo" 
+            className="w-16 h-16 rounded-full object-cover border-2 border-blue-300"
+          />
+          <div>
+            <h3 className="font-semibold text-gray-800">Your Photo</h3>
+            <p className="text-sm text-gray-600">This will be used to create your personalized vision</p>
+          </div>
+        </div>
+      </Card>
+
       {/* Goal Preview */}
       <Card className="p-4 bg-white/50 backdrop-blur-sm">
         <h3 className="font-semibold text-gray-800 mb-2">Your Goal:</h3>
@@ -125,7 +229,7 @@ const ImageGeneration = ({ userPhoto, goal, onVisionGenerated }: ImageGeneration
               <span className="text-lg font-semibold text-gray-800">{currentStep}</span>
             </div>
             <Progress value={progress} className="h-2" />
-            <p className="text-sm text-gray-600">This may take a few moments...</p>
+            <p className="text-sm text-gray-600">Creating your personalized vision...</p>
           </div>
         </Card>
       )}
@@ -146,19 +250,19 @@ const ImageGeneration = ({ userPhoto, goal, onVisionGenerated }: ImageGeneration
           ) : (
             <>
               <Sparkles className="mr-2" size={20} />
-              Generate My Future Vision
+              Generate My Personalized Vision
             </>
           )}
         </Button>
       </div>
 
       {/* Info Card */}
-      <Card className="p-4 bg-yellow-50/50 border-yellow-200">
+      <Card className="p-4 bg-green-50/50 border-green-200">
         <div className="flex items-start space-x-3">
-          <AlertCircle className="text-yellow-600 mt-1" size={16} />
-          <div className="text-sm text-yellow-800">
-            <p className="font-medium mb-1">Demo Mode</p>
-            <p>This demo uses a placeholder image. With a real Runware API key, the system will generate a personalized vision of you achieving your goal.</p>
+          <AlertCircle className="text-green-600 mt-1" size={16} />
+          <div className="text-sm text-green-800">
+            <p className="font-medium mb-1">Enhanced AI Generation</p>
+            <p>This version uses advanced prompting and face-swapping technology to create a personalized image of you achieving your specific goal.</p>
           </div>
         </div>
       </Card>
