@@ -30,7 +30,12 @@ const CameraCapture = ({ onCapture }: CameraCaptureProps) => {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         streamRef.current = stream;
-        setIsStreaming(true);
+        
+        // Wait for video to load before setting streaming state
+        videoRef.current.onloadedmetadata = () => {
+          setIsStreaming(true);
+          console.log("Video stream started successfully");
+        };
       }
     } catch (error) {
       console.error("Error accessing camera:", error);
@@ -45,24 +50,37 @@ const CameraCapture = ({ onCapture }: CameraCaptureProps) => {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
     setIsStreaming(false);
   }, []);
 
   const capturePhoto = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) return;
+    if (!videoRef.current || !canvasRef.current) {
+      console.error("Video or canvas ref not available");
+      return;
+    }
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const context = canvas.getContext('2d');
 
-    if (!context) return;
+    if (!context) {
+      console.error("Canvas context not available");
+      return;
+    }
 
+    // Set canvas dimensions to match video
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     
+    // Draw the video frame to canvas
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     
+    // Convert to data URL
     const photoUrl = canvas.toDataURL('image/jpeg', 0.8);
+    console.log("Photo captured successfully");
     setCapturedPhoto(photoUrl);
     stopCamera();
   }, [stopCamera]);
@@ -105,7 +123,8 @@ const CameraCapture = ({ onCapture }: CameraCaptureProps) => {
               autoPlay
               playsInline
               muted
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover transform scale-x-[-1]"
+              style={{ display: isStreaming ? 'block' : 'none' }}
             />
           )}
           
